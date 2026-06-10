@@ -8,7 +8,6 @@ import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.runners.RunContext;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
-import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -49,7 +48,7 @@ import java.util.Map;
         )
     }
 )
-public class Copy extends AbstractMiroConnection implements RunnableTask<Copy.Output> {
+public class Copy extends AbstractMiroConnection implements RunnableTask<BoardOutput> {
 
     @Schema(
         title = "Source board ID",
@@ -81,7 +80,7 @@ public class Copy extends AbstractMiroConnection implements RunnableTask<Copy.Ou
     private Property<String> teamId;
 
     @Override
-    public Output run(RunContext runContext) throws Exception {
+    public BoardOutput run(RunContext runContext) throws Exception {
         var logger = runContext.logger();
 
         var rSourceBoardId = runContext.render(sourceBoardId).as(String.class).orElseThrow(
@@ -107,40 +106,6 @@ public class Copy extends AbstractMiroConnection implements RunnableTask<Copy.Ou
 
         logger.info("Copied board, new ID: {}", response.getId());
 
-        return Output.builder()
-            .id(response.getId())
-            .name(response.getName())
-            .description(response.getDescription())
-            .viewLink(response.getViewLink())
-            .createdAt(response.getCreatedAt())
-            .modifiedAt(response.getModifiedAt())
-            .team(response.getTeam())
-            .build();
-    }
-
-    @Builder
-    @Getter
-    public static class Output implements io.kestra.core.models.tasks.Output {
-
-        @Schema(title = "Board ID", description = "Unique identifier of the newly created copy.")
-        private String id;
-
-        @Schema(title = "Name", description = "Name of the copied board.")
-        private String name;
-
-        @Schema(title = "Description", description = "Description of the copied board.")
-        private String description;
-
-        @Schema(title = "View link", description = "URL to open the copied board in the Miro editor.")
-        private String viewLink;
-
-        @Schema(title = "Created at", description = "ISO-8601 timestamp when the copy was created.")
-        private String createdAt;
-
-        @Schema(title = "Modified at", description = "ISO-8601 timestamp when the copy was last modified.")
-        private String modifiedAt;
-
-        @Schema(title = "Team", description = "Team the copied board belongs to.")
-        private Map<String, Object> team;
+        return BoardOutput.from(response);
     }
 }

@@ -8,7 +8,6 @@ import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.runners.RunContext;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
-import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -49,7 +48,7 @@ import java.util.Map;
         )
     }
 )
-public class Update extends AbstractMiroConnection implements RunnableTask<Update.Output> {
+public class Update extends AbstractMiroConnection implements RunnableTask<BoardOutput> {
 
     @Schema(
         title = "Board ID",
@@ -92,7 +91,7 @@ public class Update extends AbstractMiroConnection implements RunnableTask<Updat
     private Property<Map<String, Object>> permissionsPolicy;
 
     @Override
-    public Output run(RunContext runContext) throws Exception {
+    public BoardOutput run(RunContext runContext) throws Exception {
         var logger = runContext.logger();
 
         var rBoardId = runContext.render(boardId).as(String.class).orElseThrow(
@@ -128,32 +127,6 @@ public class Update extends AbstractMiroConnection implements RunnableTask<Updat
         var request = authorizedRequestWithBody(runContext, "PATCH", url, body);
         var response = execute(runContext, request, BoardResponse.class);
 
-        return Output.builder()
-            .id(response.getId())
-            .name(response.getName())
-            .description(response.getDescription())
-            .viewLink(response.getViewLink())
-            .modifiedAt(response.getModifiedAt())
-            .build();
-    }
-
-    @Builder
-    @Getter
-    public static class Output implements io.kestra.core.models.tasks.Output {
-
-        @Schema(title = "Board ID", description = "Unique identifier of the updated board.")
-        private String id;
-
-        @Schema(title = "Name", description = "Name of the updated board.")
-        private String name;
-
-        @Schema(title = "Description", description = "Description of the updated board.")
-        private String description;
-
-        @Schema(title = "View link", description = "URL to open the board in the Miro editor.")
-        private String viewLink;
-
-        @Schema(title = "Modified at", description = "ISO-8601 timestamp when the board was last modified.")
-        private String modifiedAt;
+        return BoardOutput.from(response);
     }
 }
