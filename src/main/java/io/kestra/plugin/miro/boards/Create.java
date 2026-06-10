@@ -130,8 +130,6 @@ public class Create extends AbstractMiroConnection implements RunnableTask<Board
             body.put("projectId", Map.of("id", rProjectId));
         }
 
-        // Miro v2 nests both policies under a single `policy` object; sending them at
-        // the top level (v1 style) makes the API silently ignore them.
         var policy = new HashMap<String, Object>();
 
         var rSharingPolicy = runContext.render(sharingPolicy).asMap(String.class, Object.class);
