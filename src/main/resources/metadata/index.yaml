@@ -1,8 +1,8 @@
 group: io.kestra.plugin.miro
 name: "miro"
 title: "Miro"
-description: "Miro plugin for Kestra"
-body: ""
+description: "Tasks and triggers for managing Miro boards from Kestra flows."
+body: "Provide a Miro OAuth 2.0 bearer token to list, get, create, update, delete, and copy Miro boards, and to trigger flows when new boards are created."
 videos: []
 createdBy: "Kestra Core Team"
 managedBy: "Kestra Core Team"
