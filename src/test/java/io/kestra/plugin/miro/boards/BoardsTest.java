@@ -35,25 +35,19 @@ class BoardsTest {
     private static final ObjectMapper MAPPER = JacksonMapper.ofJson(false);
 
     private WireMockServer wireMock;
-    private String previousBaseUrl;
+    private String baseUrl;
 
     @BeforeEach
     void startWireMock() {
         wireMock = new WireMockServer(WireMockConfiguration.options().dynamicPort());
         wireMock.start();
-        previousBaseUrl = System.getProperty("miro.api.base.url");
-        System.setProperty("miro.api.base.url", wireMock.baseUrl());
+        baseUrl = wireMock.baseUrl();
         configureFor("localhost", wireMock.port());
     }
 
     @AfterEach
     void stopWireMock() {
         wireMock.stop();
-        if (previousBaseUrl == null) {
-            System.clearProperty("miro.api.base.url");
-        } else {
-            System.setProperty("miro.api.base.url", previousBaseUrl);
-        }
     }
 
     // --- List ---
@@ -78,6 +72,7 @@ class BoardsTest {
         var task = io.kestra.plugin.miro.boards.List.builder()
             .token(Property.ofValue("test-token"))
             .limit(Property.ofValue(20))
+            .baseUrl(baseUrl)
             .build();
 
         var output = task.run(runContextFactory.of(Map.of()));
@@ -105,6 +100,7 @@ class BoardsTest {
         var task = io.kestra.plugin.miro.boards.List.builder()
             .token(Property.ofValue("test-token"))
             .teamId(Property.ofValue("team-abc"))
+            .baseUrl(baseUrl)
             .build();
 
         var output = task.run(runContextFactory.of(Map.of()));
@@ -131,6 +127,7 @@ class BoardsTest {
         var task = io.kestra.plugin.miro.boards.List.builder()
             .token(Property.ofValue("test-token"))
             .cursor(Property.ofValue("next-page-cursor"))
+            .baseUrl(baseUrl)
             .build();
 
         var output = task.run(runContextFactory.of(Map.of()));
@@ -151,6 +148,7 @@ class BoardsTest {
         var task = Get.builder()
             .token(Property.ofValue("test-token"))
             .boardId(Property.ofValue("board-xyz"))
+            .baseUrl(baseUrl)
             .build();
 
         var output = task.run(runContextFactory.of(Map.of()));
@@ -164,6 +162,7 @@ class BoardsTest {
     void get_missingBoardId_throws() {
         var task = Get.builder()
             .token(Property.ofValue("test-token"))
+            .baseUrl(baseUrl)
             .build();
 
         assertThrows(Exception.class, () -> task.run(runContextFactory.of(Map.of())));
@@ -184,6 +183,7 @@ class BoardsTest {
             .name(Property.ofValue("Sprint 42"))
             .boardDescription(Property.ofValue("Provisioned by Kestra"))
             .teamId(Property.ofValue("team-abc"))
+            .baseUrl(baseUrl)
             .build();
 
         var output = task.run(runContextFactory.of(Map.of()));
@@ -197,6 +197,7 @@ class BoardsTest {
     void create_missingName_throws() {
         var task = Create.builder()
             .token(Property.ofValue("test-token"))
+            .baseUrl(baseUrl)
             .build();
 
         assertThrows(Exception.class, () -> task.run(runContextFactory.of(Map.of())));
@@ -216,6 +217,7 @@ class BoardsTest {
             .token(Property.ofValue("test-token"))
             .boardId(Property.ofValue("board-xyz"))
             .name(Property.ofValue("Renamed Board"))
+            .baseUrl(baseUrl)
             .build();
 
         var output = task.run(runContextFactory.of(Map.of()));
@@ -229,6 +231,7 @@ class BoardsTest {
         var task = Update.builder()
             .token(Property.ofValue("test-token"))
             .boardId(Property.ofValue("board-xyz"))
+            .baseUrl(baseUrl)
             .build();
 
         assertThrows(IllegalArgumentException.class, () -> task.run(runContextFactory.of(Map.of())));
@@ -245,6 +248,7 @@ class BoardsTest {
         var task = Delete.builder()
             .token(Property.ofValue("test-token"))
             .boardId(Property.ofValue("board-to-delete"))
+            .baseUrl(baseUrl)
             .build();
 
         var output = task.run(runContextFactory.of(Map.of()));
@@ -257,6 +261,7 @@ class BoardsTest {
     void delete_missingBoardId_throws() {
         var task = Delete.builder()
             .token(Property.ofValue("test-token"))
+            .baseUrl(baseUrl)
             .build();
 
         assertThrows(Exception.class, () -> task.run(runContextFactory.of(Map.of())));
@@ -277,6 +282,7 @@ class BoardsTest {
             .token(Property.ofValue("test-token"))
             .sourceBoardId(Property.ofValue("source-board"))
             .name(Property.ofValue("Sprint 42 (copy)"))
+            .baseUrl(baseUrl)
             .build();
 
         var output = task.run(runContextFactory.of(Map.of()));
@@ -289,6 +295,7 @@ class BoardsTest {
     void copy_missingSourceBoardId_throws() {
         var task = Copy.builder()
             .token(Property.ofValue("test-token"))
+            .baseUrl(baseUrl)
             .build();
 
         assertThrows(Exception.class, () -> task.run(runContextFactory.of(Map.of())));
@@ -309,6 +316,7 @@ class BoardsTest {
             .name(Property.ofValue("Policy Board"))
             .sharingPolicy(Property.ofValue(Map.of("access", "private")))
             .permissionsPolicy(Property.ofValue(Map.of("collaborationToolsStartAccess", "all_editors")))
+            .baseUrl(baseUrl)
             .build();
 
         task.run(runContextFactory.of(Map.of()));
@@ -338,6 +346,7 @@ class BoardsTest {
         var task = io.kestra.plugin.miro.boards.List.builder()
             .token(Property.ofValue("test-token"))
             .sort(Property.ofValue(SortOrder.LAST_CREATED))
+            .baseUrl(baseUrl)
             .build();
 
         var output = task.run(runContextFactory.of(Map.of()));
@@ -373,6 +382,7 @@ class BoardsTest {
             .type(Trigger.class.getName())
             .token(Property.ofValue("test-token"))
             .interval(Duration.ofMinutes(5))
+            .baseUrl(baseUrl)
             .build();
 
         var context = TestsUtils.mockTrigger(runContextFactory, trigger);
@@ -412,6 +422,7 @@ class BoardsTest {
             .type(Trigger.class.getName())
             .token(Property.ofValue("test-token"))
             .interval(Duration.ofMinutes(5))
+            .baseUrl(baseUrl)
             .build();
 
         var context = TestsUtils.mockTrigger(runContextFactory, trigger);

@@ -1,5 +1,6 @@
 package io.kestra.plugin.miro.boards;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.kestra.core.http.client.configurations.HttpConfiguration;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
@@ -109,6 +110,11 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
     @PluginProperty(group = "advanced")
     private Property<Integer> limit = Property.ofValue(20);
 
+    @Builder.Default
+    @Schema(hidden = true)
+    @JsonIgnore
+    private String baseUrl = AbstractMiroConnection.MIRO_API_BASE_URL;
+
     @Override
     public Optional<Execution> evaluate(ConditionContext conditionContext, TriggerContext context) throws Exception {
         var runContext = conditionContext.getRunContext();
@@ -137,6 +143,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
             .sort(Property.ofValue(SortOrder.LAST_CREATED))
             .limit(limit)
             .options(options)
+            .baseUrl(baseUrl)
             .build()
             .run(runContext);
 

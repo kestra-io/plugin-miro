@@ -1,5 +1,6 @@
 package io.kestra.plugin.miro.boards;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.kestra.core.exceptions.IllegalVariableEvaluationException;
 import io.kestra.core.http.HttpRequest;
@@ -13,6 +14,7 @@ import io.kestra.core.runners.RunContext;
 import io.kestra.core.serializers.JacksonMapper;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
+import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -31,13 +33,10 @@ public abstract class AbstractMiroConnection extends Task {
     protected static final ObjectMapper MAPPER = JacksonMapper.ofJson(false);
     static final String MIRO_API_BASE_URL = "https://api.miro.com/v2";
 
-    /**
-     * Allows tests to override the base URL via a system property to point at WireMock.
-     */
-    static String getBaseUrl() {
-        var override = System.getProperty("miro.api.base.url");
-        return override != null ? override : MIRO_API_BASE_URL;
-    }
+    @Builder.Default
+    @Schema(hidden = true)
+    @JsonIgnore
+    protected String baseUrl = MIRO_API_BASE_URL;
 
     @Schema(
         title = "Miro OAuth 2.0 access token",
