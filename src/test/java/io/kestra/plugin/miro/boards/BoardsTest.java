@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import io.kestra.core.junit.annotations.KestraTest;
+import io.kestra.core.models.executions.Execution;
 import io.kestra.core.models.property.Property;
+import io.kestra.core.models.tasks.VoidOutput;
 import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.serializers.JacksonMapper;
+import io.kestra.core.utils.TestsUtils;
 import jakarta.inject.Inject;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
@@ -14,7 +17,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+import java.time.ZonedDateTime;
 import java.util.Map;
+import java.util.Optional;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -244,7 +250,7 @@ class BoardsTest {
 
         var output = task.run(runContextFactory.of(Map.of()));
 
-        assertThat(output, nullValue());
+        assertThat(output, instanceOf(VoidOutput.class));
         wireMock.verify(1, deleteRequestedFor(urlEqualTo("/boards/board-to-delete")));
     }
 
@@ -289,6 +295,139 @@ class BoardsTest {
         assertThrows(Exception.class, () -> task.run(runContextFactory.of(Map.of())));
     }
 
+    // --- Create policy nesting ---
+
+    @Test
+    void create_withPolicies_nestedUnderPolicyObject() throws Exception {
+        wireMock.stubFor(post(urlEqualTo("/boards"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody(MAPPER.writeValueAsString(boardJson("policy-board", "Policy Board")))
+                .withStatus(201)));
+
+        var task = Create.builder()
+            .token(Property.ofValue("test-token"))
+            .name(Property.ofValue("Policy Board"))
+            .sharingPolicy(Property.ofValue(Map.of("access", "private")))
+            .permissionsPolicy(Property.ofValue(Map.of("collaborationToolsStartAccess", "all_editors")))
+            .build();
+
+        task.run(runContextFactory.of(Map.of()));
+
+        wireMock.verify(postRequestedFor(urlEqualTo("/boards"))
+            .withRequestBody(matchingJsonPath("$.policy.sharingPolicy"))
+            .withRequestBody(matchingJsonPath("$.policy.permissionsPolicy")));
+    }
+
+    // --- List sort param ---
+
+    @Test
+    void list_withSort_passesParam() throws Exception {
+        var responseBody = Map.of(
+            "data", java.util.List.of(boardJson("sorted-board", "Sorted Board")),
+            "total", 1,
+            "size", 1
+        );
+
+        wireMock.stubFor(get(urlPathEqualTo("/boards"))
+            .withQueryParam("sort", com.github.tomakehurst.wiremock.client.WireMock.equalTo("last_created"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody(MAPPER.writeValueAsString(responseBody))
+                .withStatus(200)));
+
+        var task = io.kestra.plugin.miro.boards.List.builder()
+            .token(Property.ofValue("test-token"))
+            .sort(Property.ofValue(SortOrder.LAST_CREATED))
+            .build();
+
+        var output = task.run(runContextFactory.of(Map.of()));
+
+        assertThat(output.getBoards(), hasSize(1));
+        wireMock.verify(getRequestedFor(urlPathEqualTo("/boards"))
+            .withQueryParam("sort", com.github.tomakehurst.wiremock.client.WireMock.equalTo("last_created")));
+    }
+
+    // --- Trigger window filtering ---
+
+    @Test
+    void trigger_withInWindowBoard_returnsExecution() throws Exception {
+        var now = ZonedDateTime.now(java.time.ZoneOffset.UTC);
+        // One board created 2 minutes ago (inside a 5-minute window) and one created 10 minutes ago (outside).
+        var responseBody = Map.of(
+            "data", java.util.List.of(
+                boardJsonWithCreatedAt("board-new", "New Board", now.minus(Duration.ofMinutes(2)).toInstant().toString()),
+                boardJsonWithCreatedAt("board-old", "Old Board", now.minus(Duration.ofMinutes(10)).toInstant().toString())
+            ),
+            "total", 2,
+            "size", 2
+        );
+
+        wireMock.stubFor(get(urlPathEqualTo("/boards"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody(MAPPER.writeValueAsString(responseBody))
+                .withStatus(200)));
+
+        var trigger = Trigger.builder()
+            .id("test-trigger-" + System.nanoTime())
+            .type(Trigger.class.getName())
+            .token(Property.ofValue("test-token"))
+            .interval(Duration.ofMinutes(5))
+            .build();
+
+        var context = TestsUtils.mockTrigger(runContextFactory, trigger);
+        // Override the date so the window is (now-5m, now].
+        var triggerContext = io.kestra.core.models.triggers.Trigger.builder()
+            .triggerId(trigger.getId())
+            .flowId(context.getValue().getFlowId())
+            .namespace(context.getValue().getNamespace())
+            .date(now)
+            .build();
+
+        Optional<Execution> result = trigger.evaluate(context.getKey(), triggerContext);
+
+        assertThat(result.isPresent(), is(true));
+        assertThat(result.get().getTrigger().getVariables().get("count"), is(1));
+    }
+
+    @Test
+    void trigger_allBoardsOutsideWindow_returnsEmpty() throws Exception {
+        var now = ZonedDateTime.now(java.time.ZoneOffset.UTC);
+        var responseBody = Map.of(
+            "data", java.util.List.of(
+                boardJsonWithCreatedAt("board-old", "Old Board", now.minus(Duration.ofMinutes(10)).toInstant().toString())
+            ),
+            "total", 1,
+            "size", 1
+        );
+
+        wireMock.stubFor(get(urlPathEqualTo("/boards"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody(MAPPER.writeValueAsString(responseBody))
+                .withStatus(200)));
+
+        var trigger = Trigger.builder()
+            .id("test-trigger-" + System.nanoTime())
+            .type(Trigger.class.getName())
+            .token(Property.ofValue("test-token"))
+            .interval(Duration.ofMinutes(5))
+            .build();
+
+        var context = TestsUtils.mockTrigger(runContextFactory, trigger);
+        var triggerContext = io.kestra.core.models.triggers.Trigger.builder()
+            .triggerId(trigger.getId())
+            .flowId(context.getValue().getFlowId())
+            .namespace(context.getValue().getNamespace())
+            .date(now)
+            .build();
+
+        Optional<Execution> result = trigger.evaluate(context.getKey(), triggerContext);
+
+        assertThat(result.isPresent(), is(false));
+    }
+
     // --- Integration tests (require a real Miro token) ---
 
     @Test
@@ -326,13 +465,17 @@ class BoardsTest {
     // --- Helpers ---
 
     private static Map<String, Object> boardJson(String id, String name) {
+        return boardJsonWithCreatedAt(id, name, "2024-01-01T10:00:00Z");
+    }
+
+    private static Map<String, Object> boardJsonWithCreatedAt(String id, String name, String createdAt) {
         return Map.of(
             "id", id,
             "name", name,
             "description", "Test board",
             "type", "board",
             "viewLink", "https://miro.com/app/board/" + id + "/",
-            "createdAt", "2024-01-01T10:00:00Z",
+            "createdAt", createdAt,
             "modifiedAt", "2024-01-02T10:00:00Z"
         );
     }

@@ -14,10 +14,13 @@ import lombok.NoArgsConstructor;
 import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+
 
 @SuperBuilder
 @ToString
-@EqualsAndHashCode
+@EqualsAndHashCode(callSuper = true)
 @Getter
 @NoArgsConstructor
 @Schema(
@@ -61,7 +64,7 @@ public class Get extends AbstractMiroConnection implements RunnableTask<BoardOut
         );
 
         logger.info("Getting Miro board {}", rBoardId);
-        var url = getBaseUrl() + "/boards/" + rBoardId;
+        var url = getBaseUrl() + "/boards/" + URLEncoder.encode(rBoardId, StandardCharsets.UTF_8);
         var request = authorizedRequest(runContext, "GET", url);
         var response = execute(runContext, request, BoardResponse.class);
 

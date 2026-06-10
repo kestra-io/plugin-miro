@@ -14,12 +14,14 @@ import lombok.NoArgsConstructor;
 import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
 @SuperBuilder
 @ToString
-@EqualsAndHashCode
+@EqualsAndHashCode(callSuper = true)
 @Getter
 @NoArgsConstructor
 @Schema(
@@ -100,7 +102,7 @@ public class Copy extends AbstractMiroConnection implements RunnableTask<BoardOu
 
         logger.info("Copying Miro board {}", rSourceBoardId);
         // The Miro API copies a board via PUT /v2/boards/{copy_from} with an empty or partial body
-        var url = getBaseUrl() + "/boards?copy_from=" + rSourceBoardId;
+        var url = getBaseUrl() + "/boards?copy_from=" + URLEncoder.encode(rSourceBoardId, StandardCharsets.UTF_8);
         var request = authorizedRequestWithBody(runContext, "PUT", url, body);
         var response = execute(runContext, request, BoardResponse.class);
 

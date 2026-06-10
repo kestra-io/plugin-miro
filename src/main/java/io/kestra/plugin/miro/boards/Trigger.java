@@ -1,5 +1,6 @@
 package io.kestra.plugin.miro.boards;
 
+import io.kestra.core.http.client.configurations.HttpConfiguration;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.annotations.PluginProperty;
@@ -93,7 +94,12 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
 
     @Builder.Default
     @Schema(title = "Polling interval", description = "How often to poll the Miro boards list.")
+    @PluginProperty(group = "polling")
     private Duration interval = Duration.ofMinutes(5);
+
+    @Schema(title = "HTTP client configuration.")
+    @PluginProperty(group = "connection")
+    private HttpConfiguration options;
 
     @Builder.Default
     @Schema(
@@ -130,6 +136,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
             .projectId(projectId)
             .sort(Property.ofValue(SortOrder.LAST_CREATED))
             .limit(limit)
+            .options(options)
             .build()
             .run(runContext);
 

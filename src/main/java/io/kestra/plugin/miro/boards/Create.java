@@ -19,7 +19,7 @@ import java.util.Map;
 
 @SuperBuilder
 @ToString
-@EqualsAndHashCode
+@EqualsAndHashCode(callSuper = true)
 @Getter
 @NoArgsConstructor
 @Schema(
@@ -49,7 +49,7 @@ import java.util.Map;
                     token: "{{ secret('MIRO_TOKEN') }}"
                     name: "{{ inputs.board_name }}"
                     teamId: "{{ inputs.team_id }}"
-                    description: "Provisioned automatically by Kestra"
+                    boardDescription: "Provisioned automatically by Kestra"
                 """
         )
     }

@@ -14,12 +14,14 @@ import lombok.NoArgsConstructor;
 import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
 @SuperBuilder
 @ToString
-@EqualsAndHashCode
+@EqualsAndHashCode(callSuper = true)
 @Getter
 @NoArgsConstructor
 @Schema(
@@ -43,7 +45,7 @@ import java.util.Map;
                     token: "{{ secret('MIRO_TOKEN') }}"
                     boardId: "uXjVK1234567="
                     name: "Q3 Retrospective"
-                    description: "Updated by Kestra"
+                    boardDescription: "Updated by Kestra"
                 """
         )
     }
@@ -123,7 +125,7 @@ public class Update extends AbstractMiroConnection implements RunnableTask<Board
         }
 
         logger.info("Updating Miro board {}", rBoardId);
-        var url = getBaseUrl() + "/boards/" + rBoardId;
+        var url = getBaseUrl() + "/boards/" + URLEncoder.encode(rBoardId, StandardCharsets.UTF_8);
         var request = authorizedRequestWithBody(runContext, "PATCH", url, body);
         var response = execute(runContext, request, BoardResponse.class);
 

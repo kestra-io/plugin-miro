@@ -23,7 +23,7 @@ import java.net.URI;
 
 @SuperBuilder
 @ToString
-@EqualsAndHashCode
+@EqualsAndHashCode(callSuper = true)
 @Getter
 @NoArgsConstructor
 public abstract class AbstractMiroConnection extends Task {
