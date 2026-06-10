@@ -6,7 +6,6 @@ import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import io.kestra.core.junit.annotations.KestraTest;
 import io.kestra.core.models.executions.Execution;
 import io.kestra.core.models.property.Property;
-import io.kestra.core.models.tasks.VoidOutput;
 import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.serializers.JacksonMapper;
 import io.kestra.core.utils.TestsUtils;
@@ -250,7 +249,7 @@ class BoardsTest {
 
         var output = task.run(runContextFactory.of(Map.of()));
 
-        assertThat(output, instanceOf(VoidOutput.class));
+        assertThat(output, nullValue());
         wireMock.verify(1, deleteRequestedFor(urlEqualTo("/boards/board-to-delete")));
     }
 

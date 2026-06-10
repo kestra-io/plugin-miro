@@ -130,22 +130,34 @@ public class List extends AbstractMiroConnection implements RunnableTask<List.Ou
         var urlBuilder = new StringBuilder(getBaseUrl() + "/boards?");
 
         var rTeamId = runContext.render(teamId).as(String.class).orElse(null);
-        if (rTeamId != null) urlBuilder.append("team_id=").append(URLEncoder.encode(rTeamId, StandardCharsets.UTF_8)).append("&");
+        if (rTeamId != null) {
+            urlBuilder.append("team_id=").append(URLEncoder.encode(rTeamId, StandardCharsets.UTF_8)).append("&");
+        }
 
         var rProjectId = runContext.render(projectId).as(String.class).orElse(null);
-        if (rProjectId != null) urlBuilder.append("project_id=").append(URLEncoder.encode(rProjectId, StandardCharsets.UTF_8)).append("&");
+        if (rProjectId != null) {
+            urlBuilder.append("project_id=").append(URLEncoder.encode(rProjectId, StandardCharsets.UTF_8)).append("&");
+        }
 
         var rQuery = runContext.render(query).as(String.class).orElse(null);
-        if (rQuery != null) urlBuilder.append("query=").append(URLEncoder.encode(rQuery, StandardCharsets.UTF_8)).append("&");
+        if (rQuery != null) {
+            urlBuilder.append("query=").append(URLEncoder.encode(rQuery, StandardCharsets.UTF_8)).append("&");
+        }
 
         var rOwner = runContext.render(owner).as(String.class).orElse(null);
-        if (rOwner != null) urlBuilder.append("owner=").append(URLEncoder.encode(rOwner, StandardCharsets.UTF_8)).append("&");
+        if (rOwner != null) {
+            urlBuilder.append("owner=").append(URLEncoder.encode(rOwner, StandardCharsets.UTF_8)).append("&");
+        }
 
         var rSort = runContext.render(sort).as(SortOrder.class).orElse(null);
-        if (rSort != null) urlBuilder.append("sort=").append(rSort.value()).append("&");
+        if (rSort != null) {
+            urlBuilder.append("sort=").append(rSort.value()).append("&");
+        }
 
         var rCursor = runContext.render(cursor).as(String.class).orElse(null);
-        if (rCursor != null) urlBuilder.append("cursor=").append(URLEncoder.encode(rCursor, StandardCharsets.UTF_8)).append("&");
+        if (rCursor != null) {
+            urlBuilder.append("cursor=").append(URLEncoder.encode(rCursor, StandardCharsets.UTF_8)).append("&");
+        }
 
         var rLimit = runContext.render(limit).as(Integer.class).orElse(20);
         urlBuilder.append("limit=").append(rLimit);

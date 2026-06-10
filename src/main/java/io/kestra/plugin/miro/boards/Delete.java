@@ -71,6 +71,6 @@ public class Delete extends AbstractMiroConnection implements RunnableTask<VoidO
         execute(runContext, request, String.class);
 
         logger.info("Board {} deleted", rBoardId);
-        return new VoidOutput();
+        return null;
     }
 }

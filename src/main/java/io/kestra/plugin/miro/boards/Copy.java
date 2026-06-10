@@ -92,13 +92,19 @@ public class Copy extends AbstractMiroConnection implements RunnableTask<BoardOu
         var body = new HashMap<String, Object>();
 
         var rName = runContext.render(name).as(String.class).orElse(null);
-        if (rName != null) body.put("name", rName);
+        if (rName != null) {
+            body.put("name", rName);
+        }
 
         var rDescription = runContext.render(boardDescription).as(String.class).orElse(null);
-        if (rDescription != null) body.put("description", rDescription);
+        if (rDescription != null) {
+            body.put("description", rDescription);
+        }
 
         var rTeamId = runContext.render(teamId).as(String.class).orElse(null);
-        if (rTeamId != null) body.put("teamId", rTeamId);
+        if (rTeamId != null) {
+            body.put("teamId", rTeamId);
+        }
 
         logger.info("Copying Miro board {}", rSourceBoardId);
         // The Miro API copies a board via PUT /v2/boards/{copy_from} with an empty or partial body

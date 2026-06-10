@@ -103,22 +103,32 @@ public class Update extends AbstractMiroConnection implements RunnableTask<Board
         var body = new HashMap<String, Object>();
 
         var rName = runContext.render(name).as(String.class).orElse(null);
-        if (rName != null) body.put("name", rName);
+        if (rName != null) {
+            body.put("name", rName);
+        }
 
         var rDescription = runContext.render(boardDescription).as(String.class).orElse(null);
-        if (rDescription != null) body.put("description", rDescription);
+        if (rDescription != null) {
+            body.put("description", rDescription);
+        }
 
         // Miro v2 nests both policies under a single `policy` object; sending them at
         // the top level (v1 style) makes the API silently ignore them.
         var policy = new HashMap<String, Object>();
 
         var rSharingPolicy = runContext.render(sharingPolicy).asMap(String.class, Object.class);
-        if (!rSharingPolicy.isEmpty()) policy.put("sharingPolicy", rSharingPolicy);
+        if (!rSharingPolicy.isEmpty()) {
+            policy.put("sharingPolicy", rSharingPolicy);
+        }
 
         var rPermissionsPolicy = runContext.render(permissionsPolicy).asMap(String.class, Object.class);
-        if (!rPermissionsPolicy.isEmpty()) policy.put("permissionsPolicy", rPermissionsPolicy);
+        if (!rPermissionsPolicy.isEmpty()) {
+            policy.put("permissionsPolicy", rPermissionsPolicy);
+        }
 
-        if (!policy.isEmpty()) body.put("policy", policy);
+        if (!policy.isEmpty()) {
+            body.put("policy", policy);
+        }
 
         if (body.isEmpty()) {
             throw new IllegalArgumentException("At least one of name, description, sharingPolicy, or permissionsPolicy must be provided.");

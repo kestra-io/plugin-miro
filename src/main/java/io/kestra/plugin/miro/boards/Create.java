@@ -116,25 +116,37 @@ public class Create extends AbstractMiroConnection implements RunnableTask<Board
         body.put("name", rName);
 
         var rDescription = runContext.render(boardDescription).as(String.class).orElse(null);
-        if (rDescription != null) body.put("description", rDescription);
+        if (rDescription != null) {
+            body.put("description", rDescription);
+        }
 
         var rTeamId = runContext.render(teamId).as(String.class).orElse(null);
-        if (rTeamId != null) body.put("teamId", rTeamId);
+        if (rTeamId != null) {
+            body.put("teamId", rTeamId);
+        }
 
         var rProjectId = runContext.render(projectId).as(String.class).orElse(null);
-        if (rProjectId != null) body.put("projectId", Map.of("id", rProjectId));
+        if (rProjectId != null) {
+            body.put("projectId", Map.of("id", rProjectId));
+        }
 
         // Miro v2 nests both policies under a single `policy` object; sending them at
         // the top level (v1 style) makes the API silently ignore them.
         var policy = new HashMap<String, Object>();
 
         var rSharingPolicy = runContext.render(sharingPolicy).asMap(String.class, Object.class);
-        if (!rSharingPolicy.isEmpty()) policy.put("sharingPolicy", rSharingPolicy);
+        if (!rSharingPolicy.isEmpty()) {
+            policy.put("sharingPolicy", rSharingPolicy);
+        }
 
         var rPermissionsPolicy = runContext.render(permissionsPolicy).asMap(String.class, Object.class);
-        if (!rPermissionsPolicy.isEmpty()) policy.put("permissionsPolicy", rPermissionsPolicy);
+        if (!rPermissionsPolicy.isEmpty()) {
+            policy.put("permissionsPolicy", rPermissionsPolicy);
+        }
 
-        if (!policy.isEmpty()) body.put("policy", policy);
+        if (!policy.isEmpty()) {
+            body.put("policy", policy);
+        }
 
         logger.info("Creating Miro board: {}", rName);
         var url = getBaseUrl() + "/boards";
