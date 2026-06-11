@@ -8,7 +8,7 @@ All tasks and the trigger require `token` (a Miro OAuth 2.0 bearer token, requir
 
 ## Tasks
 
-`boards.Create` creates a board — set `name` (required). Optionally set `boardDescription`, `teamId`, `projectId`, `sharingPolicy`, and `permissionsPolicy` (the policy maps follow the Miro board policy schema). The output includes the new board `id` and `viewLink`.
+`boards.Create` creates a board — set `name` (required). Optionally set `boardDescription`, `teamId`, `projectId`, `sharingPolicy`, and `permissionsPolicy` (the policy maps follow the Miro board policy schema). The output includes the new board `id`.
 
 `boards.Get` retrieves a board by `boardId` (required), returning its full details.
 
