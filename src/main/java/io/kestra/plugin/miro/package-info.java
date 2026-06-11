@@ -1,7 +1,7 @@
 @PluginSubGroup(
     title = "Miro",
-    description = "Miro plugin for Kestra",
-    categories = PluginSubGroup.PluginCategory.DATA
+    description = "Tasks and triggers for integrating with Miro. Miro is an online collaborative whiteboard platform for teams.",
+    categories = { PluginSubGroup.PluginCategory.BUSINESS }
 )
 package io.kestra.plugin.miro;
 

@@ -1,0 +1,8 @@
+group: io.kestra.plugin.miro.boards
+name: "boards"
+title: "Miro Boards"
+description: "Tasks for managing Miro boards: list, get, create, update, delete, and copy, plus a polling trigger for new boards."
+body: "Use these tasks to automate Miro board lifecycle management: provision boards for new projects, archive completed ones, and audit board membership from a Kestra flow."
+videos: []
+createdBy: "Kestra Core Team"
+managedBy: "Kestra Core Team"
