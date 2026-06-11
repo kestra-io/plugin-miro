@@ -45,7 +45,7 @@ import java.util.Map;
                     token: "{{ secret('MIRO_TOKEN') }}"
                     sourceBoardId: "uXjVK1234567="
                     name: "Sprint 42 Retro (copy)"
-                    teamId: "{{ secret('MIRO_TEAM_ID') }}"
+                    targetTeamId: "{{ secret('MIRO_TEAM_ID') }}"
                 """
         )
     }
@@ -75,11 +75,11 @@ public class Copy extends AbstractMiroConnection implements RunnableTask<BoardOu
     private Property<String> boardDescription;
 
     @Schema(
-        title = "Team ID",
-        description = "ID of the team the copied board will be created in."
+        title = "Target team ID",
+        description = "ID of the destination team the copied board will be created in. Defaults to the source board's team if not set."
     )
     @PluginProperty(group = "destination")
-    private Property<String> teamId;
+    private Property<String> targetTeamId;
 
     @Override
     public BoardOutput run(RunContext runContext) throws Exception {
@@ -101,13 +101,14 @@ public class Copy extends AbstractMiroConnection implements RunnableTask<BoardOu
             body.put("description", rDescription);
         }
 
-        var rTeamId = runContext.render(teamId).as(String.class).orElse(null);
-        if (rTeamId != null) {
-            body.put("teamId", rTeamId);
+        var rTargetTeamId = runContext.render(targetTeamId).as(String.class).orElse(null);
+        if (rTargetTeamId != null) {
+            // API body key is "teamId" per the Miro spec
+            body.put("teamId", rTargetTeamId);
         }
 
         logger.info("Copying Miro board {}", rSourceBoardId);
-        // The Miro API copies a board via PUT /v2/boards/{copy_from} with an empty or partial body
+        // PUT /v2/boards?copy_from={id}
         var url = getBaseUrl() + "/boards?copy_from=" + URLEncoder.encode(rSourceBoardId, StandardCharsets.UTF_8);
         var request = authorizedRequestWithBody(runContext, "PUT", url, body);
         var response = execute(runContext, request, BoardResponse.class);

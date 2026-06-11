@@ -29,7 +29,7 @@ import java.util.ArrayList;
     description = """
         Returns a paginated list of boards the authenticated user can access.
         Optionally filter by team ID, project ID, sort order, or a search query.
-        Returns the first page by default; use `cursor` from the output to fetch subsequent pages."""
+        Returns the first page by default; use `offset` with `limit` and the `total` output to page through results."""
 )
 @Plugin(
     examples = {
@@ -48,7 +48,7 @@ import java.util.ArrayList;
                 """
         ),
         @Example(
-            title = "List boards with cursor-based pagination",
+            title = "List boards with offset-based pagination",
             full = true,
             code = """
                 id: list_miro_boards_paged
@@ -66,7 +66,7 @@ import java.util.ArrayList;
                     token: "{{ secret('MIRO_TOKEN') }}"
                     teamId: "{{ secret('MIRO_TEAM_ID') }}"
                     limit: 10
-                    cursor: "{{ outputs.page1.cursor }}"
+                    offset: 10
                 """
         )
     }
@@ -109,11 +109,13 @@ public class List extends AbstractMiroConnection implements RunnableTask<List.Ou
     private Property<SortOrder> sort;
 
     @Schema(
-        title = "Cursor",
-        description = "Cursor returned by a previous List call, used to fetch the next page of results."
+        title = "Offset",
+        description = """
+            Zero-based index of the first board to return, for pagination.
+            Combine with `limit` and the `total` output to page through results."""
     )
     @PluginProperty(group = "advanced")
-    private Property<String> cursor;
+    private Property<Integer> offset;
 
     @Builder.Default
     @Schema(
@@ -154,12 +156,15 @@ public class List extends AbstractMiroConnection implements RunnableTask<List.Ou
             urlBuilder.append("sort=").append(rSort.value()).append("&");
         }
 
-        var rCursor = runContext.render(cursor).as(String.class).orElse(null);
-        if (rCursor != null) {
-            urlBuilder.append("cursor=").append(URLEncoder.encode(rCursor, StandardCharsets.UTF_8)).append("&");
+        var rOffset = runContext.render(offset).as(Integer.class).orElse(null);
+        if (rOffset != null) {
+            urlBuilder.append("offset=").append(rOffset).append("&");
         }
 
         var rLimit = runContext.render(limit).as(Integer.class).orElse(20);
+        if (rLimit < 1 || rLimit > 50) {
+            throw new IllegalArgumentException("limit must be between 1 and 50, got: " + rLimit);
+        }
         urlBuilder.append("limit=").append(rLimit);
 
         var url = urlBuilder.toString();
@@ -175,7 +180,7 @@ public class List extends AbstractMiroConnection implements RunnableTask<List.Ou
             .boards(boards.stream().map(List::toMap).toList())
             .total(response.getTotal())
             .size(boards.size())
-            .cursor(response.getCursor())
+            .offset(response.getOffset())
             .build();
     }
 
@@ -206,9 +211,9 @@ public class List extends AbstractMiroConnection implements RunnableTask<List.Ou
         private Integer size;
 
         @Schema(
-            title = "Cursor",
-            description = "Cursor to pass to the next List call to retrieve the following page. Null when there are no more results."
+            title = "Offset",
+            description = "Zero-based index of the first board in this page, as echoed by the Miro API."
         )
-        private String cursor;
+        private Integer offset;
     }
 }

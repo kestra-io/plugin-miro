@@ -99,6 +99,7 @@ public class Create extends AbstractMiroConnection implements RunnableTask<Board
         title = "Permissions policy",
         description = """
             Permissions policy for the new board. Follows the Miro board permissions policy schema.
+            Example: `{collaborationToolsStartAccess: "all_editors", copyAccess: "anyone", sharingAccess: "team_members_with_editing_rights"}`.
             See [Miro permissions policy reference](https://developers.miro.com/reference/create-board)."""
     )
     @PluginProperty(group = "advanced")

@@ -110,15 +110,16 @@ class BoardsTest {
     }
 
     @Test
-    void list_withCursor_passesParam() throws Exception {
+    void list_withOffset_passesParam() throws Exception {
         var responseBody = Map.of(
             "data", java.util.List.of(),
-            "total", 0,
-            "size", 0
+            "total", 20,
+            "size", 0,
+            "offset", 10
         );
 
         wireMock.stubFor(get(urlPathEqualTo("/boards"))
-            .withQueryParam("cursor", com.github.tomakehurst.wiremock.client.WireMock.equalTo("next-page-cursor"))
+            .withQueryParam("offset", com.github.tomakehurst.wiremock.client.WireMock.equalTo("10"))
             .willReturn(aResponse()
                 .withHeader("Content-Type", "application/json")
                 .withBody(MAPPER.writeValueAsString(responseBody))
@@ -126,13 +127,16 @@ class BoardsTest {
 
         var task = io.kestra.plugin.miro.boards.List.builder()
             .token(Property.ofValue("test-token"))
-            .cursor(Property.ofValue("next-page-cursor"))
+            .offset(Property.ofValue(10))
             .baseUrl(baseUrl)
             .build();
 
         var output = task.run(runContextFactory.of(Map.of()));
 
         assertThat(output.getBoards(), empty());
+        assertThat(output.getOffset(), Matchers.equalTo(10));
+        wireMock.verify(getRequestedFor(urlPathEqualTo("/boards"))
+            .withQueryParam("offset", com.github.tomakehurst.wiremock.client.WireMock.equalTo("10")));
     }
 
     // --- Get ---
@@ -292,6 +296,28 @@ class BoardsTest {
     }
 
     @Test
+    void copy_withTargetTeamId_sendsTeamIdInBody() throws Exception {
+        wireMock.stubFor(put(urlPathEqualTo("/boards"))
+            .withQueryParam("copy_from", com.github.tomakehurst.wiremock.client.WireMock.equalTo("source-board"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody(MAPPER.writeValueAsString(boardJson("copied-board", "Sprint 42 (copy)")))
+                .withStatus(201)));
+
+        var task = Copy.builder()
+            .token(Property.ofValue("test-token"))
+            .sourceBoardId(Property.ofValue("source-board"))
+            .targetTeamId(Property.ofValue("team-xyz"))
+            .baseUrl(baseUrl)
+            .build();
+
+        task.run(runContextFactory.of(Map.of()));
+
+        wireMock.verify(putRequestedFor(urlPathEqualTo("/boards"))
+            .withRequestBody(matchingJsonPath("$.teamId", com.github.tomakehurst.wiremock.client.WireMock.equalTo("team-xyz"))));
+    }
+
+    @Test
     void copy_missingSourceBoardId_throws() {
         var task = Copy.builder()
             .token(Property.ofValue("test-token"))
@@ -354,6 +380,45 @@ class BoardsTest {
         assertThat(output.getBoards(), hasSize(1));
         wireMock.verify(getRequestedFor(urlPathEqualTo("/boards"))
             .withQueryParam("sort", com.github.tomakehurst.wiremock.client.WireMock.equalTo("last_created")));
+    }
+
+    // --- Error handling ---
+
+    @Test
+    void get_404_throwsWithStatusInMessage() {
+        wireMock.stubFor(get(urlEqualTo("/boards/no-such-board"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"message\": \"Board not found\"}")
+                .withStatus(404)));
+
+        var task = Get.builder()
+            .token(Property.ofValue("test-token"))
+            .boardId(Property.ofValue("no-such-board"))
+            .baseUrl(baseUrl)
+            .build();
+
+        var ex = assertThrows(RuntimeException.class, () -> task.run(runContextFactory.of(Map.of())));
+        assertThat(ex.getMessage(), containsString("404"));
+    }
+
+    @Test
+    void get_401_throwsWithAuthHintInMessage() {
+        wireMock.stubFor(get(urlEqualTo("/boards/board-401"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"message\": \"Unauthorized\"}")
+                .withStatus(401)));
+
+        var task = Get.builder()
+            .token(Property.ofValue("expired-token"))
+            .boardId(Property.ofValue("board-401"))
+            .baseUrl(baseUrl)
+            .build();
+
+        var ex = assertThrows(RuntimeException.class, () -> task.run(runContextFactory.of(Map.of())));
+        assertThat(ex.getMessage(), containsString("401"));
+        assertThat(ex.getMessage(), containsStringIgnoringCase("token"));
     }
 
     // --- Trigger window filtering ---
@@ -441,7 +506,7 @@ class BoardsTest {
     // --- Integration tests (require a real Miro token) ---
 
     @Test
-    @Disabled("Requires MIRO_TOKEN and MIRO_TEAM_ID env vars — run manually")
+    @Disabled("Requires MIRO_TOKEN and MIRO_TEAM_ID env vars, run manually")
     void integration_createGetDeleteBoard_roundtrip() throws Exception {
         var token = System.getenv("MIRO_TOKEN");
         var teamId = System.getenv("MIRO_TEAM_ID");

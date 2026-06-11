@@ -41,8 +41,11 @@ import java.util.Optional;
     title = "Trigger a flow when new Miro boards are created",
     description = """
         Polls the Miro boards list at the configured interval and fires an execution when one or more boards
-        have a `createdAt` timestamp strictly after the previous evaluation timestamp.
-        Stores the evaluated timestamp as trigger state to avoid re-triggering on already-seen boards.
+        have a `createdAt` timestamp in the half-open window (pollDate - interval, pollDate].
+        Detection is window-based: no persistent state is kept between polls.
+        Boards created during downtime or skipped polls fall outside the active window and will be missed.
+        Only the most recent `limit` boards (up to 50) are inspected per poll; creation bursts that exceed
+        `limit` in a single interval may also go undetected.
         Filter by `teamId` or `projectId` to scope the watch to a specific workspace."""
 )
 @Plugin(
@@ -131,6 +134,11 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
             ? context.getDate().withZoneSameInstant(ZoneOffset.UTC)
             : ZonedDateTime.now(ZoneOffset.UTC);
         var since = pollDate.minus(interval);
+
+        var rLimit = runContext.render(limit).as(Integer.class).orElse(20);
+        if (rLimit < 1 || rLimit > 50) {
+            throw new IllegalArgumentException("limit must be between 1 and 50, got: " + rLimit);
+        }
 
         // Reuse the List task instead of rebuilding the HTTP request, auth, and sort.
         // One code path means the connection/sort logic stays in a single place.

@@ -6,6 +6,7 @@ import io.kestra.core.exceptions.IllegalVariableEvaluationException;
 import io.kestra.core.http.HttpRequest;
 import io.kestra.core.http.HttpResponse;
 import io.kestra.core.http.client.HttpClient;
+import io.kestra.core.http.client.HttpClientResponseException;
 import io.kestra.core.http.client.configurations.HttpConfiguration;
 import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.property.Property;
@@ -82,6 +83,16 @@ public abstract class AbstractMiroConnection extends Task {
         try (var client = new HttpClient(runContext, options)) {
             HttpResponse<T> response = client.request(builder.build(), responseType);
             return response.getBody();
+        } catch (HttpClientResponseException e) {
+            var status = e.getResponse() != null && e.getResponse().getStatus() != null
+                ? e.getResponse().getStatus().getCode()
+                : -1;
+            var hint = switch (status) {
+                case 401 -> " Check the token (it may be expired or invalid).";
+                case 403 -> " The token may lack permission for this board/operation.";
+                default -> "";
+            };
+            throw new RuntimeException("Miro API error (HTTP " + status + "): " + e.getMessage() + hint, e);
         }
     }
 }

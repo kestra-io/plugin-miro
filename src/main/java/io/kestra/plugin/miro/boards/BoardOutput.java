@@ -34,10 +34,10 @@ public class BoardOutput implements Output {
     @Schema(title = "Modified at", description = "ISO-8601 last-modified timestamp.")
     private String modifiedAt;
 
-    @Schema(title = "Team", description = "Team the board belongs to.")
+    @Schema(title = "Team", description = "Full team object the board belongs to, as returned by Miro (id, name, ...).")
     private Map<String, Object> team;
 
-    @Schema(title = "Project", description = "Project the board belongs to, if any.")
+    @Schema(title = "Project", description = "Full project object the board belongs to, as returned by Miro (id, name, ...). Null if not assigned to a project.")
     private Map<String, Object> project;
 
     @Schema(title = "Sharing policy", description = "Board sharing policy.")
