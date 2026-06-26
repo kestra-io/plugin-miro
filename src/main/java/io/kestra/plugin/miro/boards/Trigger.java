@@ -98,10 +98,10 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
 
     @Builder.Default
     @Schema(title = "Polling interval", description = "How often to poll the Miro boards list.")
-    @PluginProperty(group = "polling")
+    @PluginProperty(group = "execution")
     private Duration interval = Duration.ofMinutes(5);
 
-    @Schema(title = "HTTP client configuration.")
+    @Schema(title = "HTTP client configuration")
     @PluginProperty(group = "connection")
     private HttpConfiguration options;
 
