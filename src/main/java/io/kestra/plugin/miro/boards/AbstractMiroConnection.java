@@ -50,7 +50,7 @@ public abstract class AbstractMiroConnection extends Task {
     @PluginProperty(group = "connection", secret = true)
     protected Property<String> token;
 
-    @Schema(title = "HTTP client configuration.")
+    @Schema(title = "HTTP client configuration")
     @PluginProperty(group = "connection")
     protected HttpConfiguration options;
 
