@@ -4,7 +4,7 @@ Manage the lifecycle of [Miro](https://miro.com/) boards — list, get, create, 
 
 ## Authentication
 
-All tasks and the trigger require `token` (a Miro OAuth 2.0 bearer token, required). Tokens expire after 1 hour; non-expiring tokens are also supported for service accounts. Optionally set `options` for HTTP client configuration. Store the token in [secrets](https://kestra.io/docs/concepts/secret) (e.g. `{{ secret('MIRO_TOKEN') }}`) and apply connection properties globally with [plugin defaults](https://kestra.io/docs/workflow-components/plugin-defaults).
+All tasks and the trigger require `token` (a Miro OAuth 2.0 bearer token, required). Tokens expire after 1 hour; non-expiring tokens are also supported for service accounts. Optionally set `options` for HTTP client configuration. Store the token in [secrets](https://kestra.io/docs/concepts/secret) (e.g. `{{ secret('MIRO_TOKEN') }}`) and set connection properties on each task.
 
 ## Tasks
 
