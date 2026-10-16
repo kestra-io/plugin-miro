@@ -16,6 +16,9 @@ import io.kestra.core.models.triggers.TriggerService;
 import io.kestra.core.runners.RunContext;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
+import com.fasterxml.jackson.core.type.TypeReference;
+import io.kestra.core.serializers.JacksonMapper;
+import io.kestra.core.storages.kv.KVValueAndMetadata;
 import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -28,6 +31,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,13 +46,11 @@ import java.util.Optional;
 @Schema(
     title = "Trigger a flow when new Miro boards are created",
     description = """
-        Polls the Miro boards list at the configured interval and fires an execution when one or more boards
-        have a `createdAt` timestamp in the half-open window (pollDate - interval, pollDate].
-        Detection is window-based: no persistent state is kept between polls.
-        Boards created during downtime or skipped polls fall outside the active window and will be missed.
-        Only the most recent `limit` boards (up to 50) are inspected per poll; creation bursts that exceed
-        `limit` in a single interval may also go undetected.
-        Filter by `teamId` or `projectId` to scope the watch to a specific workspace."""
+        Polls the Miro boards list and fires an execution when new boards are created.
+        A watermark tracking the latest board creation timestamp and processed board IDs is persisted in the namespace KV store under key `<flowId.length>_<flowId>_<triggerId.length>_<triggerId>_watermark`, ensuring no boards are missed during downtime, restarts, or scheduler delays.
+        On the initial poll, boards created within the last configured interval are evaluated and the watermark is seeded.
+        Paging retrieves up to 10 pages per poll (offset pagination). If the 10-page cap is exceeded due to a large backlog, the poll fails to avoid data loss; to unblock and resume polling from the current time, delete the watermark key in the namespace KV store.
+        Note: Miro only sorts by creation date when `teamId` or `projectId` is specified; when neither is provided, all pages (up to 10) are inspected."""
 )
 @Plugin(
     examples = {
@@ -123,58 +127,186 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
         var runContext = conditionContext.getRunContext();
         var logger = runContext.logger();
 
-        // Fire for boards created in the window (pollDate - interval, pollDate].
-        // context.getDate() is THIS poll's scheduled slot, and the scheduler spaces
-        // polls exactly `interval` apart, so consecutive windows tile without gaps or
-        // overlaps. The upper bound matters: the worker runs a few seconds after the
-        // slot, so without it a board created in that gap would match two consecutive
-        // windows and fire twice. Using getDate() as the lower bound (no subtraction)
-        // would ask for boards created after "now" and never fire at all.
-        var pollDate = context.getDate() != null
-            ? context.getDate().withZoneSameInstant(ZoneOffset.UTC)
-            : ZonedDateTime.now(ZoneOffset.UTC);
-        var since = pollDate.minus(interval);
-
         var rLimit = runContext.render(limit).as(Integer.class).orElse(20);
         if (rLimit < 1 || rLimit > 50) {
             throw new IllegalArgumentException("limit must be between 1 and 50, got: " + rLimit);
         }
 
-        // Reuse the List task instead of rebuilding the HTTP request, auth, and sort.
-        // One code path means the connection/sort logic stays in a single place.
-        var listOutput = io.kestra.plugin.miro.boards.List.builder()
-            .id(this.id)
-            .type(io.kestra.plugin.miro.boards.List.class.getName())
-            .token(token)
-            .teamId(teamId)
-            .projectId(projectId)
-            .sort(Property.ofValue(SortOrder.LAST_CREATED))
-            .limit(limit)
-            .options(options)
-            .baseUrl(baseUrl)
-            .build()
-            .run(runContext);
+        var flowId = context.getFlowId() != null ? context.getFlowId() : "default";
+        var triggerId = context.getTriggerId() != null ? context.getTriggerId() : (this.getId() != null ? this.getId() : "default");
+        var stateKey = flowId.length() + "_" + flowId + "_" + triggerId.length() + "_" + triggerId + "_watermark";
+
+        var namespace = context.getNamespace() != null ? context.getNamespace() : "default";
+        var kvStore = runContext.namespaceKv(namespace);
+
+        Optional<io.kestra.core.storages.kv.KVValue> stateEntry;
+        try {
+            stateEntry = kvStore.getValue(stateKey);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to read watermark state from namespace KV store for key: " + stateKey, e);
+        }
+
+        Map<String, Object> watermark = null;
+        if (stateEntry.isPresent() && stateEntry.get().value() != null) {
+            try {
+                var val = stateEntry.get().value();
+                if (val instanceof Map<?, ?> map) {
+                    watermark = new HashMap<>();
+                    for (var entry : map.entrySet()) {
+                        watermark.put(String.valueOf(entry.getKey()), entry.getValue());
+                    }
+                } else {
+                    watermark = JacksonMapper.ofJson().readValue(val.toString(), new TypeReference<Map<String, Object>>() {});
+                }
+                if (watermark == null || !watermark.containsKey("lastCreatedAt")) {
+                    throw new IllegalStateException("Corrupted watermark: missing 'lastCreatedAt'");
+                }
+                Instant.parse(watermark.get("lastCreatedAt").toString());
+            } catch (Exception e) {
+                throw new IllegalStateException("Failed to deserialize or validate watermark state from namespace KV store for key: " + stateKey, e);
+            }
+        }
+
+        Instant sinceInstant;
+        var seenIds = new HashSet<String>();
+
+        if (watermark != null) {
+            sinceInstant = Instant.parse(watermark.get("lastCreatedAt").toString());
+            var seenObj = watermark.get("seenIds");
+            if (seenObj instanceof List<?> list) {
+                for (var item : list) {
+                    if (item != null) {
+                        seenIds.add(item.toString());
+                    }
+                }
+            }
+        } else {
+            var nowUtc = context.getDate() != null
+                ? context.getDate().withZoneSameInstant(ZoneOffset.UTC)
+                : ZonedDateTime.now(ZoneOffset.UTC);
+            sinceInstant = nowUtc.minus(interval).toInstant();
+        }
+
+        var rTeamId = runContext.render(teamId).as(String.class).orElse(null);
+        var rProjectId = runContext.render(projectId).as(String.class).orElse(null);
+        var isSorted = (rTeamId != null && !rTeamId.isBlank()) || (rProjectId != null && !rProjectId.isBlank());
 
         var newBoards = new ArrayList<Map<String, Object>>();
-        if (listOutput.getBoards() != null) {
-            for (var board : listOutput.getBoards()) {
-                var createdAt = board.get("createdAt");
-                if (createdAt != null
-                    && isAfter(createdAt.toString(), since)
-                    && !isAfter(createdAt.toString(), pollDate)) {
-                    newBoards.add(board);
+        var collectedBoardIds = new HashSet<String>();
+        var currentOffset = 0;
+        var maxPages = 10;
+        var hasMore = true;
+        var hitPageCap = false;
+
+        for (var page = 0; page < maxPages && hasMore; page++) {
+            var listOutput = io.kestra.plugin.miro.boards.List.builder()
+                .id(this.id)
+                .type(io.kestra.plugin.miro.boards.List.class.getName())
+                .token(token)
+                .teamId(teamId)
+                .projectId(projectId)
+                .sort(Property.ofValue(SortOrder.LAST_CREATED))
+                .limit(Property.ofValue(rLimit))
+                .offset(Property.ofValue(currentOffset))
+                .options(options)
+                .baseUrl(baseUrl)
+                .build()
+                .run(runContext);
+
+            var boards = listOutput.getBoards();
+            if (boards == null || boards.isEmpty()) {
+                break;
+            }
+
+            var reachedOlder = false;
+            for (var board : boards) {
+                var createdAtStr = board.get("createdAt");
+                var boardId = String.valueOf(board.getOrDefault("id", ""));
+
+                if (createdAtStr != null && !boardId.isBlank()) {
+                    try {
+                        var boardInstant = Instant.parse(createdAtStr.toString());
+                        var isNew = boardInstant.isAfter(sinceInstant)
+                            || (boardInstant.equals(sinceInstant) && !seenIds.contains(boardId));
+
+                        if (isNew) {
+                            if (collectedBoardIds.add(boardId)) {
+                                newBoards.add(board);
+                            }
+                        } else if (isSorted) {
+                            reachedOlder = true;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+
+            var total = listOutput.getTotal();
+            if ((isSorted && reachedOlder) || boards.size() < rLimit || (total != null && currentOffset + boards.size() >= total)) {
+                hasMore = false;
+            } else {
+                currentOffset += rLimit;
+                if (page == maxPages - 1) {
+                    hitPageCap = true;
                 }
             }
         }
 
+        if (hitPageCap) {
+            logger.warn("Reached maximum page limit ({}) during Miro board polling; some boards may remain unread", maxPages);
+            throw new IllegalStateException("Exceeded maximum page limit (" + maxPages + ") during Miro board polling. "
+                + "To unblock and resume polling from the current time, delete the KV watermark key '" + stateKey + "' in the namespace KV store.");
+        }
+
+        var newestCreatedAt = sinceInstant;
+        var newestIds = new LinkedHashSet<String>(seenIds);
+
+        if (!newBoards.isEmpty()) {
+            for (var b : newBoards) {
+                var cStr = b.get("createdAt");
+                var bId = String.valueOf(b.getOrDefault("id", ""));
+                if (cStr != null && !bId.isBlank()) {
+                    try {
+                        var bInstant = Instant.parse(cStr.toString());
+                        if (bInstant.isAfter(newestCreatedAt)) {
+                            newestCreatedAt = bInstant;
+                            newestIds.clear();
+                            newestIds.add(bId);
+                        } else if (bInstant.equals(newestCreatedAt)) {
+                            newestIds.add(bId);
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+        } else if (watermark == null) {
+            var nowUtc = context.getDate() != null
+                ? context.getDate().withZoneSameInstant(ZoneOffset.UTC)
+                : ZonedDateTime.now(ZoneOffset.UTC);
+            newestCreatedAt = nowUtc.toInstant();
+            newestIds.clear();
+        }
+
+        try {
+            Map<String, Object> newWatermark = Map.of(
+                "lastCreatedAt", newestCreatedAt.toString(),
+                "seenIds", new ArrayList<>(newestIds)
+            );
+            kvStore.put(stateKey, new KVValueAndMetadata(
+                null,
+                JacksonMapper.ofJson().writeValueAsString(newWatermark)
+            ));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to persist watermark state in namespace KV store for key: " + stateKey, e);
+        }
+
         if (newBoards.isEmpty()) {
-            logger.debug("No new Miro boards in window ({}, {}]", since, pollDate);
+            logger.debug("No new Miro boards found after watermark {}", sinceInstant);
             return Optional.empty();
         }
 
-        logger.info("Found {} new Miro board(s) since {}", newBoards.size(), since);
+        logger.info("Found {} new Miro board(s) since watermark {}", newBoards.size(), sinceInstant);
 
-        // Emit one execution per trigger evaluation, carrying all new boards
         var first = newBoards.getFirst();
         var output = Output.builder()
             .id(first.getOrDefault("id", "").toString())
@@ -185,14 +317,6 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
             .build();
 
         return Optional.of(TriggerService.generateExecution(this, conditionContext, context, output));
-    }
-
-    private static boolean isAfter(String iso, ZonedDateTime since) {
-        try {
-            return Instant.parse(iso).atZone(ZoneOffset.UTC).isAfter(since);
-        } catch (Exception e) {
-            return false;
-        }
     }
 
     @Builder
