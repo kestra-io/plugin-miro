@@ -11,7 +11,6 @@ import io.kestra.core.serializers.JacksonMapper;
 import io.kestra.core.storages.kv.KVValueAndMetadata;
 import io.kestra.core.utils.TestsUtils;
 import jakarta.inject.Inject;
-import jakarta.validation.ConstraintViolationException;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -857,7 +856,32 @@ class BoardsTest {
     }
 
     @Test
-    void trigger_withoutTeamOrProjectId_throwsConstraintViolationException() throws Exception {
+    void trigger_withoutTeamOrProjectId_defaultsToTokenTeamId() throws Exception {
+        var now = ZonedDateTime.now(ZoneOffset.UTC);
+
+        // Stub /v1/oauth-token
+        wireMock.stubFor(get(urlPathEqualTo("/v1/oauth-token"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody(MAPPER.writeValueAsString(Map.of(
+                    "team", Map.of("id", "resolved-team-999")
+                )))
+                .withStatus(200)));
+
+        // Stub /boards with team_id=resolved-team-999
+        wireMock.stubFor(get(urlPathEqualTo("/boards"))
+            .withQueryParam("team_id", equalTo("resolved-team-999"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody(MAPPER.writeValueAsString(Map.of(
+                    "data", java.util.List.of(
+                        boardJsonWithCreatedAt("board-default-team", "Default Team Board", now.toInstant().toString())
+                    ),
+                    "total", 1,
+                    "size", 1
+                )))
+                .withStatus(200)));
+
         var trigger = Trigger.builder()
             .id("test-trigger-no-team-" + System.nanoTime())
             .type(Trigger.class.getName())
@@ -871,21 +895,45 @@ class BoardsTest {
             .triggerId(trigger.getId())
             .flowId(context.getValue().getFlowId())
             .namespace(context.getValue().getNamespace())
-            .date(ZonedDateTime.now(ZoneOffset.UTC))
+            .date(now)
             .build();
 
-        assertThat(trigger.isTeamOrProjectSet(), is(false));
-        var ex = assertThrows(ConstraintViolationException.class, () -> trigger.evaluate(context.getKey(), triggerContext));
-        assertThat(ex.getMessage(), containsString("Set 'teamId' or 'projectId'"));
+        var res = trigger.evaluate(context.getKey(), triggerContext);
+        assertThat(res.isPresent(), is(true));
+        assertThat(res.get().getTrigger().getVariables().get("id"), Matchers.equalTo("board-default-team"));
+
+        // Verify /v1/oauth-token was called once
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/v1/oauth-token"))
+            .withHeader("Authorization", equalTo("Bearer test-token")));
+
+        // Verify /boards was called with team_id=resolved-team-999
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/boards"))
+            .withQueryParam("team_id", equalTo("resolved-team-999")));
     }
 
     @Test
-    void trigger_withBlankTeamIdAndNoProjectId_throwsIllegalArgumentException() throws Exception {
+    void trigger_withExplicitTeamId_doesNotCallOAuthTokenEndpoint() throws Exception {
+        var now = ZonedDateTime.now(ZoneOffset.UTC);
+
+        // Stub /boards with explicit team-123
+        wireMock.stubFor(get(urlPathEqualTo("/boards"))
+            .withQueryParam("team_id", equalTo("team-123"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody(MAPPER.writeValueAsString(Map.of(
+                    "data", java.util.List.of(
+                        boardJsonWithCreatedAt("board-explicit", "Explicit Team Board", now.toInstant().toString())
+                    ),
+                    "total", 1,
+                    "size", 1
+                )))
+                .withStatus(200)));
+
         var trigger = Trigger.builder()
-            .id("test-trigger-blank-team-" + System.nanoTime())
+            .id("test-trigger-explicit-team-" + System.nanoTime())
             .type(Trigger.class.getName())
             .token(Property.ofValue("test-token"))
-            .teamId(Property.ofValue(""))
+            .teamId(Property.ofValue("team-123"))
             .interval(Duration.ofMinutes(5))
             .baseUrl(baseUrl)
             .build();
@@ -895,12 +943,17 @@ class BoardsTest {
             .triggerId(trigger.getId())
             .flowId(context.getValue().getFlowId())
             .namespace(context.getValue().getNamespace())
-            .date(ZonedDateTime.now(ZoneOffset.UTC))
+            .date(now)
             .build();
 
-        assertThat(trigger.isTeamOrProjectSet(), is(true));
-        var ex = assertThrows(IllegalArgumentException.class, () -> trigger.evaluate(context.getKey(), triggerContext));
-        assertThat(ex.getMessage(), containsString("Either 'teamId' or 'projectId' must be specified"));
+        var res = trigger.evaluate(context.getKey(), triggerContext);
+        assertThat(res.isPresent(), is(true));
+
+        // Verify /v1/oauth-token was never called
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/v1/oauth-token")));
+        // Verify /boards was called with explicit team-123
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/boards"))
+            .withQueryParam("team_id", equalTo("team-123")));
     }
 
     @Test

@@ -2,6 +2,10 @@ package io.kestra.plugin.miro.boards;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.core.type.TypeReference;
+import io.kestra.core.http.HttpRequest;
+import io.kestra.core.http.HttpResponse;
+import io.kestra.core.http.client.HttpClient;
+import io.kestra.core.http.client.HttpClientResponseException;
 import io.kestra.core.http.client.configurations.HttpConfiguration;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
@@ -20,7 +24,6 @@ import io.kestra.core.storages.kv.KVStore;
 import io.kestra.core.storages.kv.KVValue;
 import io.kestra.core.storages.kv.KVValueAndMetadata;
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotNull;
 import lombok.Builder;
 import lombok.EqualsAndHashCode;
@@ -29,6 +32,7 @@ import lombok.NoArgsConstructor;
 import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 
+import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -51,7 +55,7 @@ import java.util.Set;
     title = "Trigger a flow when new Miro boards are created",
     description = """
         Polls the Miro boards list and fires an execution when new boards are created.
-        Either `teamId` or `projectId` must be specified to enable chronological sorting of boards by Miro.
+        If neither `teamId` nor `projectId` is specified, the trigger defaults to watching the token's team (resolved via `GET /v1/oauth-token`).
         A watermark tracking the latest board creation timestamp and processed board IDs is persisted in the namespace KV store under key `<flowId.length>_<flowId>_<triggerId.length>_<triggerId>_watermark`, ensuring no boards are missed during downtime, restarts, or scheduler delays.
         On the initial poll, boards created within the last configured interval are evaluated and the watermark is seeded.
         Paging retrieves up to 10 pages per poll (offset pagination). If the 10-page cap is exceeded due to a large backlog, the poll fails to avoid data loss; to unblock and resume polling from the current time, delete the watermark key in the namespace KV store."""
@@ -94,23 +98,17 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
 
     @Schema(
         title = "Team ID",
-        description = "Restrict the watch to boards in this team. At least one of `teamId` or `projectId` must be specified."
+        description = "Restrict the watch to boards in this team. If neither `teamId` nor `projectId` is specified, defaults to the authenticated token's team."
     )
     @PluginProperty(group = "processing")
     private Property<String> teamId;
 
     @Schema(
         title = "Project ID",
-        description = "Restrict the watch to boards in this project. At least one of `teamId` or `projectId` must be specified."
+        description = "Restrict the watch to boards in this project. If neither `teamId` nor `projectId` is specified, defaults to the authenticated token's team."
     )
     @PluginProperty(group = "processing")
     private Property<String> projectId;
-
-    @JsonIgnore
-    @AssertTrue(message = "Set 'teamId' or 'projectId': Miro only sorts boards by creation date within a team or project")
-    public boolean isTeamOrProjectSet() {
-        return teamId != null || projectId != null;
-    }
 
     @Builder.Default
     @Schema(title = "Polling interval", description = "How often to poll the Miro boards list.")
@@ -141,9 +139,6 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
 
         var rTeamId = runContext.render(teamId).as(String.class).orElse(null);
         var rProjectId = runContext.render(projectId).as(String.class).orElse(null);
-        if ((rTeamId == null || rTeamId.isBlank()) && (rProjectId == null || rProjectId.isBlank())) {
-            throw new IllegalArgumentException("Either 'teamId' or 'projectId' must be specified for the Miro board trigger.");
-        }
 
         var rLimit = runContext.render(limit).as(Integer.class).orElse(20);
         if (rLimit < 1 || rLimit > 50) {
@@ -162,10 +157,24 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
         var kvStore = runContext.namespaceKv(namespace);
 
         var watermark = readWatermark(kvStore, stateKey);
+
+        String effectiveTeamId = rTeamId;
+        String effectiveProjectId = rProjectId;
+
+        if ((effectiveTeamId == null || effectiveTeamId.isBlank()) && (effectiveProjectId == null || effectiveProjectId.isBlank())) {
+            if (watermark != null && watermark.teamId() != null && !watermark.teamId().isBlank()) {
+                effectiveTeamId = watermark.teamId();
+                logger.info("Miro board trigger using cached token teamId '{}' from KV watermark", effectiveTeamId);
+            } else {
+                effectiveTeamId = resolveTokenTeamId(runContext);
+                logger.info("Neither 'teamId' nor 'projectId' was specified; Miro board trigger defaulted to the token's teamId '{}'", effectiveTeamId);
+            }
+        }
+
         var sinceInstant = watermark != null ? watermark.lastCreatedAt() : nowUtc.minus(interval).toInstant();
         var seenIds = watermark != null ? watermark.seenIds() : Set.<String>of();
 
-        var newBoards = fetchNewBoards(runContext, rLimit, sinceInstant, seenIds, stateKey);
+        var newBoards = fetchNewBoards(runContext, effectiveTeamId, effectiveProjectId, rLimit, sinceInstant, seenIds, stateKey);
 
         var newestCreatedAt = sinceInstant;
         var newestIds = new LinkedHashSet<String>(seenIds);
@@ -193,7 +202,10 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
             newestIds.clear();
         }
 
-        writeWatermark(kvStore, stateKey, newestCreatedAt, newestIds);
+        String savedTeamId = (rTeamId == null || rTeamId.isBlank()) && (rProjectId == null || rProjectId.isBlank())
+            ? effectiveTeamId
+            : null;
+        writeWatermark(kvStore, stateKey, newestCreatedAt, newestIds, savedTeamId);
 
         if (newBoards.isEmpty()) {
             logger.debug("No new Miro boards found after watermark {}", sinceInstant);
@@ -212,6 +224,46 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
             .build();
 
         return Optional.of(TriggerService.generateExecution(this, conditionContext, context, output));
+    }
+
+    private String resolveTokenTeamId(RunContext runContext) throws Exception {
+        var rToken = runContext.render(token).as(String.class).orElseThrow(
+            () -> new IllegalArgumentException("token is required")
+        );
+
+        String oauthTokenUrl;
+        if (baseUrl != null && !baseUrl.isBlank() && !AbstractMiroConnection.MIRO_API_BASE_URL.equals(baseUrl)) {
+            oauthTokenUrl = baseUrl + "/v1/oauth-token";
+        } else {
+            oauthTokenUrl = "https://api.miro.com/v1/oauth-token";
+        }
+
+        var request = HttpRequest.builder()
+            .method("GET")
+            .uri(URI.create(oauthTokenUrl))
+            .addHeader("Authorization", "Bearer " + rToken)
+            .addHeader("Accept", "application/json")
+            .build();
+
+        Map<String, Object> body;
+        try (var client = new HttpClient(runContext, options)) {
+            HttpResponse<Map<String, Object>> response = client.request(request, new TypeReference<Map<String, Object>>() {});
+            body = response.getBody();
+        } catch (HttpClientResponseException e) {
+            var status = e.getResponse() != null && e.getResponse().getStatus() != null
+                ? e.getResponse().getStatus().getCode()
+                : -1;
+            throw new RuntimeException("Failed to resolve team from Miro OAuth token (HTTP " + status + "): " + e.getMessage(), e);
+        }
+
+        if (body != null && body.get("team") instanceof Map<?, ?> teamMap) {
+            var teamIdObj = teamMap.get("id");
+            if (teamIdObj != null && !teamIdObj.toString().isBlank()) {
+                return teamIdObj.toString();
+            }
+        }
+
+        throw new IllegalStateException("Miro OAuth token response did not contain a valid team.id: " + body);
     }
 
     private Watermark readWatermark(KVStore kvStore, String stateKey) {
@@ -250,7 +302,8 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
                     }
                 }
             }
-            return new Watermark(lastCreatedAt, seenIds);
+            var cachedTeamId = watermarkMap.get("teamId") != null ? watermarkMap.get("teamId").toString() : null;
+            return new Watermark(lastCreatedAt, seenIds, cachedTeamId);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to deserialize or validate watermark state from namespace KV store for key: " + stateKey, e);
         }
@@ -258,6 +311,8 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
 
     private List<Map<String, Object>> fetchNewBoards(
         RunContext runContext,
+        String effectiveTeamId,
+        String effectiveProjectId,
         int rLimit,
         Instant sinceInstant,
         Set<String> seenIds,
@@ -275,8 +330,8 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
                 .id(this.id)
                 .type(io.kestra.plugin.miro.boards.List.class.getName())
                 .token(token)
-                .teamId(teamId)
-                .projectId(projectId)
+                .teamId(effectiveTeamId != null ? Property.ofValue(effectiveTeamId) : null)
+                .projectId(effectiveProjectId != null ? Property.ofValue(effectiveProjectId) : null)
                 .sort(Property.ofValue(SortOrder.LAST_CREATED))
                 .limit(Property.ofValue(rLimit))
                 .offset(Property.ofValue(currentOffset))
@@ -333,12 +388,14 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
         return newBoards;
     }
 
-    private void writeWatermark(KVStore kvStore, String stateKey, Instant newestCreatedAt, Set<String> newestIds) {
+    private void writeWatermark(KVStore kvStore, String stateKey, Instant newestCreatedAt, Set<String> newestIds, String teamId) {
         try {
-            var newWatermark = Map.<String, Object>of(
-                "lastCreatedAt", newestCreatedAt.toString(),
-                "seenIds", new ArrayList<>(newestIds)
-            );
+            var newWatermark = new HashMap<String, Object>();
+            newWatermark.put("lastCreatedAt", newestCreatedAt.toString());
+            newWatermark.put("seenIds", new ArrayList<>(newestIds));
+            if (teamId != null && !teamId.isBlank()) {
+                newWatermark.put("teamId", teamId);
+            }
             kvStore.put(stateKey, new KVValueAndMetadata(
                 null,
                 JacksonMapper.ofJson().writeValueAsString(newWatermark)
@@ -348,7 +405,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
         }
     }
 
-    private record Watermark(Instant lastCreatedAt, Set<String> seenIds) {}
+    private record Watermark(Instant lastCreatedAt, Set<String> seenIds, String teamId) {}
 
     @Builder
     @Getter
