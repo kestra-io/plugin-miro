@@ -87,12 +87,15 @@ public abstract class AbstractMiroConnection extends Task {
             var status = e.getResponse() != null && e.getResponse().getStatus() != null
                 ? e.getResponse().getStatus().getCode()
                 : -1;
-            var hint = switch (status) {
-                case 401 -> " Check the token (it may be expired or invalid).";
-                case 403 -> " The token may lack permission for this board/operation.";
-                default -> "";
-            };
-            throw new RuntimeException("Miro API error (HTTP " + status + "): " + e.getMessage() + hint, e);
+            throw new RuntimeException("Miro API error (HTTP " + status + "): " + e.getMessage() + httpErrorHint(status), e);
         }
+    }
+
+    static String httpErrorHint(int status) {
+        return switch (status) {
+            case 401 -> " Check the token (it may be expired or invalid).";
+            case 403 -> " The token may lack permission for this board/operation.";
+            default -> "";
+        };
     }
 }

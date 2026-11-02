@@ -1,9 +1,9 @@
 package io.kestra.plugin.miro.boards;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.core.type.TypeReference;
 import io.kestra.core.http.HttpRequest;
-import io.kestra.core.http.HttpResponse;
 import io.kestra.core.http.client.HttpClient;
 import io.kestra.core.http.client.HttpClientResponseException;
 import io.kestra.core.http.client.configurations.HttpConfiguration;
@@ -56,6 +56,7 @@ import java.util.Set;
     description = """
         Polls the Miro boards list and fires an execution when new boards are created.
         If neither `teamId` nor `projectId` is specified, the trigger defaults to watching the token's team (resolved via `GET /v1/oauth-token`).
+        The resolved token team is cached in the watermark KV key; after changing the token, delete that key to re-resolve it.
         A watermark tracking the latest board creation timestamp and processed board IDs is persisted in the namespace KV store under key `<flowId.length>_<flowId>_<triggerId.length>_<triggerId>_watermark`, ensuring no boards are missed during downtime, restarts, or scheduler delays.
         On the initial poll, boards created within the last configured interval are evaluated and the watermark is seeded.
         Paging retrieves up to 10 pages per poll (offset pagination). If the 10-page cap is exceeded due to a large backlog, the poll fails to avoid data loss; to unblock and resume polling from the current time, delete the watermark key in the namespace KV store."""
@@ -158,13 +159,13 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
 
         var watermark = readWatermark(kvStore, stateKey);
 
-        String effectiveTeamId = rTeamId;
-        String effectiveProjectId = rProjectId;
+        var effectiveTeamId = rTeamId;
+        var effectiveProjectId = rProjectId;
 
         if ((effectiveTeamId == null || effectiveTeamId.isBlank()) && (effectiveProjectId == null || effectiveProjectId.isBlank())) {
             if (watermark != null && watermark.teamId() != null && !watermark.teamId().isBlank()) {
                 effectiveTeamId = watermark.teamId();
-                logger.info("Miro board trigger using cached token teamId '{}' from KV watermark", effectiveTeamId);
+                logger.debug("Miro board trigger using cached token teamId '{}' from KV watermark", effectiveTeamId);
             } else {
                 effectiveTeamId = resolveTokenTeamId(runContext);
                 logger.info("Neither 'teamId' nor 'projectId' was specified; Miro board trigger defaulted to the token's teamId '{}'", effectiveTeamId);
@@ -202,7 +203,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
             newestIds.clear();
         }
 
-        String savedTeamId = (rTeamId == null || rTeamId.isBlank()) && (rProjectId == null || rProjectId.isBlank())
+        var savedTeamId = (rTeamId == null || rTeamId.isBlank()) && (rProjectId == null || rProjectId.isBlank())
             ? effectiveTeamId
             : null;
         writeWatermark(kvStore, stateKey, newestCreatedAt, newestIds, savedTeamId);
@@ -245,25 +246,37 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
             .addHeader("Accept", "application/json")
             .build();
 
-        Map<String, Object> body;
+        TokenInfo body;
         try (var client = new HttpClient(runContext, options)) {
-            HttpResponse<Map<String, Object>> response = client.request(request, new TypeReference<Map<String, Object>>() {});
+            var response = client.request(request, TokenInfo.class);
             body = response.getBody();
         } catch (HttpClientResponseException e) {
             var status = e.getResponse() != null && e.getResponse().getStatus() != null
                 ? e.getResponse().getStatus().getCode()
                 : -1;
-            throw new RuntimeException("Failed to resolve team from Miro OAuth token (HTTP " + status + "): " + e.getMessage(), e);
+            throw new RuntimeException("Failed to resolve team from Miro OAuth token (HTTP " + status + "): " + e.getMessage() + AbstractMiroConnection.httpErrorHint(status), e);
         }
 
-        if (body != null && body.get("team") instanceof Map<?, ?> teamMap) {
-            var teamIdObj = teamMap.get("id");
-            if (teamIdObj != null && !teamIdObj.toString().isBlank()) {
-                return teamIdObj.toString();
-            }
+        if (body != null && body.getTeam() != null && body.getTeam().getId() != null && !body.getTeam().getId().isBlank()) {
+            return body.getTeam().getId();
         }
 
-        throw new IllegalStateException("Miro OAuth token response did not contain a valid team.id: " + body);
+        // Deliberately omit the response body: it carries user and organization identifiers.
+        throw new IllegalStateException("Miro token info has no team.id; set 'teamId' or 'projectId' on the trigger");
+    }
+
+    @Getter
+    @NoArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private static class TokenInfo {
+        private Team team;
+
+        @Getter
+        @NoArgsConstructor
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        private static class Team {
+            private String id;
+        }
     }
 
     private Watermark readWatermark(KVStore kvStore, String stateKey) {

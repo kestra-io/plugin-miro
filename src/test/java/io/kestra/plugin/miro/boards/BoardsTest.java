@@ -859,7 +859,6 @@ class BoardsTest {
     void trigger_withoutTeamOrProjectId_defaultsToTokenTeamId() throws Exception {
         var now = ZonedDateTime.now(ZoneOffset.UTC);
 
-        // Stub /v1/oauth-token
         wireMock.stubFor(get(urlPathEqualTo("/v1/oauth-token"))
             .willReturn(aResponse()
                 .withHeader("Content-Type", "application/json")
@@ -868,7 +867,6 @@ class BoardsTest {
                 )))
                 .withStatus(200)));
 
-        // Stub /boards with team_id=resolved-team-999
         wireMock.stubFor(get(urlPathEqualTo("/boards"))
             .withQueryParam("team_id", equalTo("resolved-team-999"))
             .willReturn(aResponse()
@@ -902,20 +900,95 @@ class BoardsTest {
         assertThat(res.isPresent(), is(true));
         assertThat(res.get().getTrigger().getVariables().get("id"), Matchers.equalTo("board-default-team"));
 
-        // Verify /v1/oauth-token was called once
         wireMock.verify(1, getRequestedFor(urlPathEqualTo("/v1/oauth-token"))
             .withHeader("Authorization", equalTo("Bearer test-token")));
 
-        // Verify /boards was called with team_id=resolved-team-999
         wireMock.verify(1, getRequestedFor(urlPathEqualTo("/boards"))
             .withQueryParam("team_id", equalTo("resolved-team-999")));
+    }
+
+    @Test
+    void trigger_withoutTeamOrProjectId_cachesTokenTeamIdInWatermark() throws Exception {
+        var now = ZonedDateTime.now(ZoneOffset.UTC);
+
+        wireMock.stubFor(get(urlPathEqualTo("/v1/oauth-token"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody(MAPPER.writeValueAsString(Map.of("team", Map.of("id", "resolved-team-999"))))
+                .withStatus(200)));
+        wireMock.stubFor(get(urlPathEqualTo("/boards"))
+            .withQueryParam("team_id", equalTo("resolved-team-999"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody(MAPPER.writeValueAsString(Map.of("data", java.util.List.of(), "total", 0, "size", 0)))
+                .withStatus(200)));
+
+        var trigger = Trigger.builder()
+            .id("test-trigger-cache-team-" + System.nanoTime())
+            .type(Trigger.class.getName())
+            .token(Property.ofValue("test-token"))
+            .interval(Duration.ofMinutes(5))
+            .baseUrl(baseUrl)
+            .build();
+
+        var context = TestsUtils.mockTrigger(runContextFactory, trigger);
+        var triggerContext = io.kestra.core.models.triggers.Trigger.builder()
+            .triggerId(trigger.getId())
+            .flowId(context.getValue().getFlowId())
+            .namespace(context.getValue().getNamespace())
+            .date(now)
+            .build();
+
+        trigger.evaluate(context.getKey(), triggerContext);
+        trigger.evaluate(context.getKey(), triggerContext);
+
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/v1/oauth-token")));
+        wireMock.verify(2, getRequestedFor(urlPathEqualTo("/boards"))
+            .withQueryParam("team_id", equalTo("resolved-team-999")));
+
+        var flowId = context.getValue().getFlowId();
+        var triggerId = trigger.getId();
+        var stateKey = flowId.length() + "_" + flowId + "_" + triggerId.length() + "_" + triggerId + "_watermark";
+        var kvStore = context.getKey().getRunContext().namespaceKv(context.getValue().getNamespace());
+        var stored = kvStore.getValue(stateKey);
+        assertThat(stored.isPresent(), is(true));
+        assertThat(stored.get().value().toString(), containsString("\"teamId\":\"resolved-team-999\""));
+    }
+
+    @Test
+    void trigger_tokenInfoWithoutTeam_throwsWithoutLeakingBody() throws Exception {
+        var now = ZonedDateTime.now(ZoneOffset.UTC);
+
+        wireMock.stubFor(get(urlPathEqualTo("/v1/oauth-token"))
+            .willReturn(aResponse()
+                .withHeader("Content-Type", "application/json")
+                .withBody("{}")
+                .withStatus(200)));
+
+        var trigger = Trigger.builder()
+            .id("test-trigger-no-team-info-" + System.nanoTime())
+            .type(Trigger.class.getName())
+            .token(Property.ofValue("test-token"))
+            .interval(Duration.ofMinutes(5))
+            .baseUrl(baseUrl)
+            .build();
+
+        var context = TestsUtils.mockTrigger(runContextFactory, trigger);
+        var triggerContext = io.kestra.core.models.triggers.Trigger.builder()
+            .triggerId(trigger.getId())
+            .flowId(context.getValue().getFlowId())
+            .namespace(context.getValue().getNamespace())
+            .date(now)
+            .build();
+
+        var ex = assertThrows(IllegalStateException.class, () -> trigger.evaluate(context.getKey(), triggerContext));
+        assertThat(ex.getMessage(), is("Miro token info has no team.id; set 'teamId' or 'projectId' on the trigger"));
     }
 
     @Test
     void trigger_withExplicitTeamId_doesNotCallOAuthTokenEndpoint() throws Exception {
         var now = ZonedDateTime.now(ZoneOffset.UTC);
 
-        // Stub /boards with explicit team-123
         wireMock.stubFor(get(urlPathEqualTo("/boards"))
             .withQueryParam("team_id", equalTo("team-123"))
             .willReturn(aResponse()
@@ -949,9 +1022,7 @@ class BoardsTest {
         var res = trigger.evaluate(context.getKey(), triggerContext);
         assertThat(res.isPresent(), is(true));
 
-        // Verify /v1/oauth-token was never called
         wireMock.verify(0, getRequestedFor(urlPathEqualTo("/v1/oauth-token")));
-        // Verify /boards was called with explicit team-123
         wireMock.verify(1, getRequestedFor(urlPathEqualTo("/boards"))
             .withQueryParam("team_id", equalTo("team-123")));
     }
